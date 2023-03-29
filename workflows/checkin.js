@@ -2,6 +2,8 @@ import notification from "./utils/notification-kit";
 const JuejinHelper = require("juejin-helper");
 const utils = require("./utils/utils");
 const env = require("./utils/env");
+import axios, { AxiosInstance } from "axios";
+
 
 class Task {
   constructor(juejin) {
@@ -224,6 +226,112 @@ class MockVisitTask extends Task {
   }
 }
 
+class Article extends Task{
+  taskName='浏览文章';
+  http= AxiosInstance;
+  browseArticle = ''; //浏览的文章
+  number = 10; //浏览的数量
+  waitTime = [5000, 10000]; //等待5-10s
+
+
+  constructor(juejin) {
+    super(juejin);
+    this.http = axios.create({
+      baseURL: "https://api.juejin.cn",
+      headers: {
+        referer: "https://juejin.cn/",
+        origin: "https://juejin.cn"
+      }
+    });
+
+    this.http.interceptors.request.use(
+        function (config) {
+          if (!juejin) config;
+          config.headers.cookie = juejin?.getCookie();
+
+          if (juejin.user) {
+            const tokens = juejin.getCookieTokens();
+
+            // @ts-ignore
+            config.url += `${config.url.indexOf("?") === -1 ? "?" : "&"}aid=${tokens.aid}&uuid=${tokens.uuid}`;
+          }
+          // console.log(config.url)
+          return config;
+        },
+        function (error) {
+          return Promise.reject(error);
+        }
+    );
+
+    this.http.interceptors.response.use(
+        function (response) {
+          if (response.data.err_no) {
+            throw new Error(response.data.err_msg);
+          }
+          return response.data.data;
+        },
+        function (error) {
+          return Promise.reject(error);
+        }
+    );
+  }
+
+  /**
+   * 获取文章列表
+   * @returns {Promise<*>}
+   */
+  async getArticles() {
+    return this.http.post("/recommend_api/v1/article/recommend_all_feed", {
+      id_type: 2,
+      client_type: 2608,
+      sort_type: 200,
+      cursor: "0",
+      limit: 20
+    });
+  }
+  async shuffleArticles(arr) {
+    return arr.sort(() => Math.random() - 0.5);
+  }
+
+  async run() {
+    // 浏览文章
+    console.log("");
+    console.log("-------开始浏览文章-------");
+    let articleData = await this.getArticles();
+    let articleIdArr = [];
+    for (let i in articleData) {
+      let article_id = articleData[i]?.item_info?.article_id;
+      if (article_id) {
+        articleIdArr.push({ a_id: article_id, title: articleData[i]?.item_info?.article_info?.title });
+      }
+    }
+
+    // 打乱数据
+    await this.shuffleArticles(articleIdArr);
+    const browser = this.juejin.browser();
+    await browser.open();
+
+    for (let i = 0; i < (articleIdArr.length > this.number ? this.number : articleIdArr.length); i++) {
+      await utils.wait(utils.randomRangeNumber(...this.waitTime)); // 等待s
+      try {
+        await browser.visitPage("/post/"+articleIdArr[i].a_id);
+      } catch (e) {
+        console.log(articleIdArr[i].title + "文章访问失败");
+      }
+      let tmp = parseInt(i) + 1;
+
+      this.browseArticle +=  `${tmp}、 <a href="https://juejin.cn/post/${articleIdArr[i].a_id}">${articleIdArr[i].title} </a>
+`;
+
+      // this.browseArticle.push(articleIdArr[i]);
+      console.log("文章" + (i + 1) + "：" + articleIdArr[i].title);
+    }
+    console.log("-------结束浏览文章-------");
+    console.log("");
+  }
+
+}
+
 class CheckIn {
   cookie = "";
   username = "";
@@ -249,6 +357,7 @@ class CheckIn {
     this.bugfixTask = new BugfixTask(juejin);
     this.sdkTask = new SdkTask(juejin);
     this.mockVisitTask = new MockVisitTask(juejin);
+    this.articleTask = new Article(juejin);
 
     await this.mockVisitTask.run();
     await this.sdkTask.run();
@@ -260,6 +369,8 @@ class CheckIn {
     await this.lotteriesTask.run(this.growthTask, this.dipLuckyTask);
     console.log(`运行 ${this.bugfixTask.taskName}`);
     await this.bugfixTask.run();
+    console.log(`运行 ${this.articleTask.taskName}`);
+    await this.articleTask.run();
     await juejin.logout();
     console.log("-------------------------");
   }
@@ -306,6 +417,9 @@ ${
 预测All In矿石累计幸运值比率 ${(this.lotteriesTask.luckyValueProbability * 100).toFixed(2) + "%"}
 抽奖总次数 ${this.lotteriesTask.lotteryCount}
 免费抽奖次数 ${this.lotteriesTask.freeCount}
+
+浏览的文章
+${this.articleTask.browseArticle}
 ${this.lotteriesTask.lotteryCount > 0 ? "==============\n" + drawLotteryHistory + "\n==============" : ""}
 `.trim();
   }
